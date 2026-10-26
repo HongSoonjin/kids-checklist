@@ -31,7 +31,23 @@ function dueLabel(d) {
   return `${d.slice(5).replace('-', '/')}까지`
 }
 
-function Login() {
+const AUTH_MSG = {
+  'auth/email-already-in-use': '이미 가입된 이메일이에요. "이미 계정이 있어요"를 눌러 로그인해 주세요.',
+  'auth/invalid-credential': '이메일이나 비밀번호가 맞지 않아요.',
+  'auth/wrong-password': '이메일이나 비밀번호가 맞지 않아요.',
+  'auth/user-not-found': '가입되지 않은 이메일이에요. 먼저 가입해 주세요.',
+  'auth/invalid-email': '이메일 형식이 올바르지 않아요. 예: name@family.app',
+  'auth/weak-password': '비밀번호는 6자 이상이어야 해요.',
+  'auth/operation-not-allowed': 'Firebase에서 이메일/비밀번호 로그인이 꺼져 있어요.',
+  'auth/invalid-api-key': 'Firebase 설정값이 비어 있거나 잘못됐어요.',
+  'auth/network-request-failed': '네트워크 연결을 확인해 주세요.',
+  'auth/too-many-requests': '시도가 너무 많아요. 잠시 뒤에 다시 해보세요.'
+}
+
+// 가입 처리 중에는 로그인 상태 변화를 무시해서 화면이 바뀌지 않게 함
+let signingUp = false
+
+function Login({ onDone }) {
   const [signup, setSignup] = useState(false)
   const [f, setF] = useState({ email: '', password: '', name: '', role: 'child', code: '' })
   const [err, setErr] = useState('')
@@ -45,6 +61,7 @@ function Login() {
       if (!signup) {
         await signInWithEmailAndPassword(auth, f.email, f.password)
       } else {
+        signingUp = true
         const cred = await createUserWithEmailAndPassword(auth, f.email, f.password)
         try {
           await setDoc(doc(db, 'users', cred.user.uid), {
@@ -55,12 +72,13 @@ function Login() {
           await cred.user.delete()
           throw new Error('가입 코드가 맞지 않아요. 가족에게 코드를 물어보세요.')
         }
+        signingUp = false
+        onDone()
       }
     } catch (e2) {
-      setErr(e2.message.startsWith('Firebase')
-        ? '이메일이나 비밀번호를 확인해 주세요. (비밀번호는 6자 이상)'
-        : e2.message)
+      setErr(e2.code ? (AUTH_MSG[e2.code] || `오류가 발생했어요 (${e2.code})`) : e2.message)
     }
+    signingUp = false
     setBusy(false)
   }
 
@@ -214,7 +232,11 @@ export default function App() {
   const [profile, setProfile] = useState(null)
   const [items, setItems] = useState([])
 
-  useEffect(() => onAuthStateChanged(auth, (u) => { setUser(u); if (!u) setProfile(null) }), [])
+  useEffect(() => onAuthStateChanged(auth, (u) => {
+    if (signingUp) return
+    setUser(u)
+    if (!u) setProfile(null)
+  }), [])
   useEffect(() => {
     if (!user) return
     return onSnapshot(doc(db, 'users', user.uid), (s) => setProfile(s.exists() ? s.data() : null))
@@ -228,7 +250,7 @@ export default function App() {
   }, [user, profile])
 
   if (user === undefined) return <p className="empty">불러오는 중…</p>
-  if (!user) return <Login />
+  if (!user) return <Login onDone={() => setUser(auth.currentUser)} />
   if (!profile) return <p className="empty">프로필을 준비하고 있어요…</p>
 
   return (
