@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
-  onAuthStateChanged, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut
+  onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+  signOut, setPersistence, browserLocalPersistence, browserSessionPersistence
 } from 'firebase/auth'
 import {
   doc, setDoc, addDoc, updateDoc, deleteDoc, collection,
@@ -47,35 +47,60 @@ const AUTH_MSG = {
 // 가입 처리 중에는 로그인 상태 변화를 무시해서 화면이 바뀌지 않게 함
 let signingUp = false
 
+const store = {
+  get: (k) => { try { return localStorage.getItem(k) } catch { return null } },
+  set: (k, v) => { try { localStorage.setItem(k, v) } catch { /* 저장 불가 환경 */ } },
+  del: (k) => { try { localStorage.removeItem(k) } catch { /* 저장 불가 환경 */ } }
+}
+
 function Login({ onDone }) {
   const [signup, setSignup] = useState(false)
-  const [f, setF] = useState({ email: '', password: '', name: '', role: 'child', code: '' })
+  const [f, setF] = useState({
+    email: store.get('saveEmail') === '1' ? store.get('savedEmail') || '' : '',
+    password: '', name: '', role: 'child', code: ''
+  })
+  const [saveEmail, setSaveEmail] = useState(store.get('saveEmail') === '1')
+  const [keep, setKeep] = useState(store.get('keepLogin') !== '0')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
 
+  function remember(email) {
+    store.set('keepLogin', keep ? '1' : '0')
+    if (saveEmail) { store.set('saveEmail', '1'); store.set('savedEmail', email) }
+    else { store.del('saveEmail'); store.del('savedEmail') }
+  }
+
   async function submit(e) {
     e.preventDefault()
     setErr(''); setBusy(true)
+    const email = f.email.trim()
     try {
+      await setPersistence(auth, keep ? browserLocalPersistence : browserSessionPersistence)
       if (!signup) {
-        await signInWithEmailAndPassword(auth, f.email, f.password)
+        await signInWithEmailAndPassword(auth, email, f.password)
+        remember(email)
       } else {
         signingUp = true
-        const cred = await createUserWithEmailAndPassword(auth, f.email, f.password)
+        const cred = await createUserWithEmailAndPassword(auth, email, f.password)
         try {
           await setDoc(doc(db, 'users', cred.user.uid), {
             name: f.name.trim(), role: f.role, code: f.code.trim(),
             familyId: 'main', createdAt: serverTimestamp()
           })
-        } catch {
+        } catch (e3) {
+          console.error('프로필 생성 실패', e3)
           await cred.user.delete()
-          throw new Error('가입 코드가 맞지 않아요. 가족에게 코드를 물어보세요.')
+          throw new Error(e3.code === 'permission-denied'
+            ? '가입 코드가 맞지 않아요. 가족에게 코드를 물어보세요.'
+            : `프로필을 만들지 못했어요 (${e3.code || e3.message}). 잠시 뒤 다시 시도해 주세요.`)
         }
+        remember(email)
         signingUp = false
         onDone()
       }
     } catch (e2) {
+      console.error(e2)
       setErr(e2.code ? (AUTH_MSG[e2.code] || `오류가 발생했어요 (${e2.code})`) : e2.message)
     }
     signingUp = false
@@ -87,8 +112,13 @@ function Login({ onDone }) {
       <h1 className="logo">이거사줘</h1>
       <p className="sub">필요한 걸 적어두면 엄마 아빠가 답해줘요</p>
       <form className="card" onSubmit={submit}>
-        <label>이메일<input type="email" value={f.email} onChange={set('email')} required /></label>
-        <label>비밀번호<input type="password" value={f.password} onChange={set('password')} required /></label>
+        <label>이메일
+          <input type="email" autoComplete="username" value={f.email} onChange={set('email')} required />
+        </label>
+        <label>비밀번호
+          <input type="password" autoComplete={signup ? 'new-password' : 'current-password'}
+                 value={f.password} onChange={set('password')} required />
+        </label>
         {signup && (
           <>
             <label>이름(별명)<input value={f.name} onChange={set('name')} required /></label>
@@ -101,6 +131,16 @@ function Login({ onDone }) {
             <label>가입 코드<input value={f.code} onChange={set('code')} required /></label>
           </>
         )}
+        <div className="checks">
+          <label className="check">
+            <input type="checkbox" checked={saveEmail} onChange={(e) => setSaveEmail(e.target.checked)} />
+            이메일 저장
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
+            로그인 상태 유지
+          </label>
+        </div>
         {err && <p className="err">{err}</p>}
         <button className="btn main" disabled={busy}>{signup ? '가입하기' : '로그인'}</button>
         <button type="button" className="link" onClick={() => { setSignup(!signup); setErr('') }}>
