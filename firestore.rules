@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function userPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function hasProfile() { return signedIn() && exists(userPath()); }
+    function isParent() { return hasProfile() && get(userPath()).data.role == 'parent'; }
+    function isChild() { return hasProfile() && get(userPath()).data.role == 'child'; }
+    function codes() { return get(/databases/$(database)/documents/config/invite).data; }
+
+    // 가입 코드: 콘솔에서만 수정, 앱에서는 읽기 불가
+    match /config/{doc} { allow read, write: if false; }
+
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'role', 'code', 'familyId', 'createdAt'])
+        && ((request.resource.data.role == 'parent' && request.resource.data.code == codes().parentCode)
+         || (request.resource.data.role == 'child' && request.resource.data.code == codes().childCode));
+      allow update, delete: if false;
+    }
+
+    match /items/{id} {
+      allow read: if isParent() || (isChild() && resource.data.childId == request.auth.uid);
+      allow create: if isChild()
+        && request.resource.data.childId == request.auth.uid
+        && request.resource.data.status == 'requested';
+      // 부모: 상태/피드백만, 자녀: 수령 확인/읽음 표시만
+      allow update: if (isParent()
+          && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'parentEmoji', 'parentComment', 'seenResponse', 'respondedAt']))
+        || (isChild() && resource.data.childId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['receivedByChild', 'seenResponse']));
+      allow delete: if isParent()
+        || (isChild() && resource.data.childId == request.auth.uid && resource.data.status == 'requested');
+    }
+  }
+}
