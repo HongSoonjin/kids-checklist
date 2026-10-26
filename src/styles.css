@@ -89,6 +89,14 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 .emojis button { min-width: 44px; min-height: 44px; font-size: 1.25rem; background: var(--bg); border: 1px solid transparent; border-radius: 12px; cursor: pointer; }
 .emojis button.on { background: var(--tint); border-color: var(--primary); }
 
+/* 부모 등록 */
+.btn.wide { width: 100%; margin-bottom: 20px; }
+.muted { color: var(--muted); font-size: .9rem; }
+.tag { padding: 0 8px; font-size: .75rem; font-weight: 700; color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 99px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { min-height: 44px; padding: 8px 16px; font: inherit; font-weight: 700; color: var(--ink); background: var(--bg); border: 2px solid var(--line); border-radius: 99px; cursor: pointer; }
+.chip.on { color: #fff; background: var(--who); border-color: var(--who); }
+
 /* 부모 요약 */
 .banner { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 26px; }
 .banner div { display: flex; align-items: baseline; gap: 8px; padding: 14px 18px; font-size: .88rem; font-weight: 600; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }

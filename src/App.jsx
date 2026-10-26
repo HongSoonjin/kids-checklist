@@ -19,7 +19,7 @@ const COLORS = ['#3451D1', '#E5484D', '#12A594', '#8E4EC6', '#E5930A']
 const colorOf = (n = '') => COLORS[[...n].reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length]
 const today = () => new Date().toLocaleDateString('sv')
 const daysLeft = (d) => Math.round((new Date(d) - new Date(today())) / 86400000)
-const closed = (it) => it.status === 'done' && it.receivedByChild
+const closed = (it) => it.status === 'done' && (it.receivedByChild || it.forParent)
 const urgent = (it) => it.status !== 'done' && daysLeft(it.dueDate) <= 1
 const cmp = (a, b) => (closed(a) - closed(b)) || a.dueDate.localeCompare(b.dueDate)
 
@@ -152,7 +152,13 @@ function Login({ onDone }) {
 }
 
 function Card({ it, children }) {
-  const s = STATUS[it.status]
+  const s = it.forParent
+    ? (it.status === 'done'
+        ? { icon: '✅', label: '샀어요', cls: 'done' }
+        : { icon: '🛒', label: '살 거', cls: 'seen' })
+    : it.byParent && it.status === 'seen'
+      ? { icon: '🛒', label: '준비 중', cls: 'seen' }
+      : STATUS[it.status]
   return (
     <li className={`item ${urgent(it) ? 'urgent' : ''} ${closed(it) ? 'closed' : ''}`}
         style={{ '--who': colorOf(it.childName) }}>
@@ -162,6 +168,7 @@ function Card({ it, children }) {
       </div>
       <div className="meta">
         <span className="due">{dueLabel(it.dueDate)}</span>
+        {it.byParent && !it.forParent && <span className="tag">부모 등록</span>}
         {it.memo && <span className="memo">{it.memo}</span>}
       </div>
       {it.status !== 'requested' && (it.parentEmoji || it.parentComment) && (
@@ -227,6 +234,20 @@ function ParentItem({ it }) {
     status, parentComment: comment.trim(), parentEmoji: emoji,
     seenResponse: false, respondedAt: serverTimestamp()
   })
+  const patch = (data) => updateDoc(doc(db, 'items', it.id), { ...data, respondedAt: serverTimestamp() })
+  const remove = () => confirm('삭제할까요?') && deleteDoc(doc(db, 'items', it.id))
+  if (it.forParent) {
+    return (
+      <Card it={it}>
+        <div className="actions">
+          {it.status === 'done'
+            ? <button className="btn" onClick={() => patch({ status: 'seen' })}>되돌리기</button>
+            : <button className="btn main" onClick={() => patch({ status: 'done' })}>✅ 샀어요</button>}
+          <button className="btn ghost" onClick={remove}>삭제</button>
+        </div>
+      </Card>
+    )
+  }
   return (
     <Card it={it}>
       <div className="emojis">
@@ -245,7 +266,65 @@ function ParentItem({ it }) {
   )
 }
 
-function Parent({ items }) {
+function ParentAdd({ uid, name }) {
+  const [open, setOpen] = useState(false)
+  const [kids, setKids] = useState([])
+  const [sel, setSel] = useState([])
+  const [f, setF] = useState({ title: '', dueDate: today(), memo: '' })
+  const [msg, setMsg] = useState('')
+  const targets = [{ id: uid, name, own: true }, ...kids]
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
+  const toggle = (id) => setSel(sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id])
+
+  useEffect(() => onSnapshot(
+    query(collection(db, 'users'), where('role', '==', 'child')),
+    (s) => setKids(s.docs.map((d) => ({ id: d.id, name: d.data().name }))),
+    (e) => console.error(e)
+  ), [])
+
+  async function add(e) {
+    e.preventDefault()
+    if (!sel.length) { setMsg('누구 것인지 골라 주세요.'); return }
+    setMsg('')
+    try {
+      await Promise.all(targets.filter((k) => sel.includes(k.id)).map((k) =>
+        addDoc(collection(db, 'items'), {
+          childId: k.id, childName: k.name, title: f.title.trim(), memo: f.memo.trim(),
+          dueDate: f.dueDate, status: 'seen', byParent: true, forParent: !!k.own,
+          parentEmoji: '', parentComment: '', receivedByChild: false,
+          seenResponse: !!k.own, createdAt: serverTimestamp()
+        })))
+      setF({ title: '', dueDate: today(), memo: '' }); setSel([]); setOpen(false)
+    } catch (e2) {
+      console.error(e2)
+      setMsg(`등록하지 못했어요 (${e2.code || e2.message})`)
+    }
+  }
+
+  if (!open) return <button className="btn main wide" onClick={() => setOpen(true)}>＋ 살 거 등록하기</button>
+  return (
+    <form className="card" onSubmit={add}>
+      <h2>살 거 등록하기</h2>
+      <div className="chips">
+        {targets.map((k) => (
+          <button type="button" key={k.id} className={`chip ${sel.includes(k.id) ? 'on' : ''}`}
+                  style={{ '--who': colorOf(k.name) }} onClick={() => toggle(k.id)}>{k.own ? `${k.name} (나)` : k.name}</button>
+        ))}
+      </div>
+      {kids.length === 0 && <p className="muted">아직 가입한 자녀가 없어요. 나(부모)의 항목만 등록할 수 있어요.</p>}
+      <input placeholder="예: 체육복, 색종이 10장" value={f.title} onChange={set('title')} required />
+      <label>언제까지 필요해?<input type="date" min={today()} value={f.dueDate} onChange={set('dueDate')} required /></label>
+      <input placeholder="메모 (선택)" value={f.memo} onChange={set('memo')} />
+      {msg && <p className="err">{msg}</p>}
+      <div className="actions">
+        <button className="btn main">등록</button>
+        <button type="button" className="btn ghost" onClick={() => setOpen(false)}>닫기</button>
+      </div>
+    </form>
+  )
+}
+
+function Parent({ items, uid, name }) {
   const groups = {}
   items.forEach((it) => { (groups[it.childId] ||= { name: it.childName, list: [] }).list.push(it) })
   const fresh = items.filter((i) => i.status === 'requested').length
@@ -256,10 +335,11 @@ function Parent({ items }) {
         <div><b>{fresh}</b>새 요청</div>
         <div className={hot ? 'hot' : ''}><b>{hot}</b>급한 것</div>
       </div>
+      <ParentAdd uid={uid} name={name} />
       {items.length === 0 && <p className="empty">아직 등록된 준비물이 없어요.</p>}
-      {Object.entries(groups).map(([id, g]) => (
+      {Object.entries(groups).sort(([, a], [, b]) => !!a.list[0].forParent - !!b.list[0].forParent).map(([id, g]) => (
         <section key={id}>
-          <h2 className="kid" style={{ '--who': colorOf(g.name) }}>{g.name}</h2>
+          <h2 className="kid" style={{ '--who': colorOf(g.name) }}>{g.name}{g.list[0].forParent ? ' (부모)' : ''}</h2>
           <ul className="list">{g.list.map((it) => <ParentItem key={it.id} it={it} />)}</ul>
         </section>
       ))}
@@ -301,7 +381,7 @@ export default function App() {
         <button className="link" onClick={() => signOut(auth)}>로그아웃</button>
       </header>
       {profile.role === 'parent'
-        ? <Parent items={items} />
+        ? <Parent items={items} uid={user.uid} name={profile.name} />
         : <Child uid={user.uid} profile={profile} items={items} />}
     </div>
   )
