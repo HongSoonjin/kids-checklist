@@ -12,7 +12,7 @@ service cloud.firestore {
     match /config/{doc} { allow read, write: if false; }
 
     match /users/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
+      allow read: if signedIn() && (request.auth.uid == uid || isParent());
       allow create: if signedIn() && request.auth.uid == uid
         && request.resource.data.keys().hasOnly(['name', 'role', 'code', 'familyId', 'createdAt'])
         && ((request.resource.data.role == 'parent' && request.resource.data.code == codes().parentCode)
@@ -22,9 +22,13 @@ service cloud.firestore {
 
     match /items/{id} {
       allow read: if isParent() || (isChild() && resource.data.childId == request.auth.uid);
-      allow create: if isChild()
-        && request.resource.data.childId == request.auth.uid
-        && request.resource.data.status == 'requested';
+      allow create: if (isChild()
+          && request.resource.data.childId == request.auth.uid
+          && request.resource.data.status == 'requested')
+        || (isParent()
+          && request.resource.data.childId is string
+          && request.resource.data.byParent == true
+          && request.resource.data.status == 'seen');
       // 부모: 상태/피드백만, 자녀: 수령 확인/읽음 표시만
       allow update: if (isParent()
           && request.resource.data.diff(resource.data).affectedKeys()
